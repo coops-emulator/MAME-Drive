@@ -42,9 +42,9 @@
 
   #topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#111318;gap:8px;}
   #topbar button{background:#1c1f26;color:#eee;border:1px solid #2a2d35;border-radius:8px;padding:8px 12px;font-size:.85rem;}
-  #game-wrap{flex:1;position:relative;background:#000;display:none;overflow:hidden;}
-  #game{width:100%;height:100%;}
-  #game canvas{width:100% !important;height:100% !important;display:block;}
+  #game-wrap{flex:1;position:relative;background:#000;display:none;overflow:hidden;justify-content:center;align-items:center;}
+  #game-wrap.show{display:flex;}
+  #game{width:100%;height:100%;display:flex;justify-content:center;align-items:center;}
 
   #loading-overlay{position:fixed;inset:0;background:#0b0c10;display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:100;}
   #loading-overlay.show{display:flex;}
@@ -74,6 +74,7 @@
   <div id="topbar" class="hidden">
     <strong id="title" style="font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></strong>
     <div style="display:flex;gap:8px;">
+      <button id="switchCoreBtn"></button>
       <button id="fsBtn">Fullscreen</button>
       <button id="backBtn">Library</button>
     </div>
@@ -282,14 +283,18 @@ biosBundleInput.addEventListener('change', async e => {
 
 /* ---------- launching a game ---------- */
 let watchdog = null;
+let currentRom = null;
 async function launch(rom){
+  currentRom = rom;
   overlay.classList.add('show');
   loadingText.textContent = `Loading ${(rom.meta && rom.meta.title) || rom.id}…`;
 
   libraryView.classList.add('hidden');
   topbar.classList.remove('hidden');
-  gameWrap.style.display = 'block';
+  gameWrap.classList.add('show');
   titleEl.textContent = (rom.meta && rom.meta.title) || rom.id;
+  const otherCore = coreSelect.value === 'mame2003_plus' ? 'FinalBurn Neo' : 'MAME 2003-Plus';
+  document.getElementById('switchCoreBtn').textContent = `Try ${otherCore}`;
 
   const gameUrl = trackUrl(URL.createObjectURL(rom.blob));
   window.EJS_player = '#game';
@@ -303,11 +308,19 @@ async function launch(rom){
   window.EJS_disableAutoLang = true;
   window.EJS_Buttons = { fullscreen:false, saveState:true, loadState:true, screenRecord:false, quickSave:true, quickLoad:true };
 
-  const biosName = biosSelect.value;
+  // Prefer whatever BIOS the user picked manually. If they haven't picked one,
+  // auto-match against the BIOS/parent set name the Arcade Database reports
+  // for this game (rom.meta.biosOf), so you don't have to guess from a list
+  // of hundreds of uploaded BIOS/device files.
   window.EJS_biosUrl = '';
-  if (biosName){
-    const biosRec = (await idbAll('bios')).find(b => b.name === biosName);
-    if (biosRec) window.EJS_biosUrl = trackUrl(URL.createObjectURL(biosRec.blob));
+  const allBios = await idbAll('bios');
+  let chosenBios = biosSelect.value ? allBios.find(b => b.name === biosSelect.value) : null;
+  if (!chosenBios && rom.meta && rom.meta.biosOf){
+    chosenBios = allBios.find(b => b.name.replace(/\.zip$/i,'').toLowerCase() === rom.meta.biosOf.toLowerCase());
+  }
+  if (chosenBios){
+    window.EJS_biosUrl = trackUrl(URL.createObjectURL(chosenBios.blob));
+    loadingText.textContent = `Loading ${(rom.meta && rom.meta.title) || rom.id}… (BIOS: ${chosenBios.name})`;
   }
 
   const hideOverlay = () => {
@@ -345,12 +358,17 @@ function teardownGame(){
   document.getElementById('game').innerHTML = '';
   revokeUrls();
   delete window.EJS_emulator;
-  gameWrap.style.display = 'none';
+  gameWrap.classList.remove('show');
   topbar.classList.add('hidden');
   libraryView.classList.remove('hidden');
   renderLibrary();
 }
 document.getElementById('backBtn').onclick = teardownGame;
+document.getElementById('switchCoreBtn').onclick = () => {
+  coreSelect.value = coreSelect.value === 'mame2003_plus' ? 'fbneo' : 'mame2003_plus';
+  localStorage.setItem('mp_core', coreSelect.value);
+  if (currentRom) launch(currentRom);
+};
 
 document.getElementById('fsBtn').onclick = () => {
   if (!document.fullscreenElement) gameWrap.requestFullscreen?.() || gameWrap.webkitRequestFullscreen?.();

@@ -20,7 +20,8 @@ export default {
 
       // Edge cache: once any visitor looks up a game, every other visitor
       // gets an instant response instead of re-hitting arcadeitalia.net.
-      const cacheKey = new Request(url.toString(), request);
+      // ?v=2 busts any entries cached before the biosOf field was added.
+      const cacheKey = new Request(url.toString() + '&v=2', request);
       const cache = caches.default;
       const cached = await cache.match(cacheKey);
       if (cached) return cached;
@@ -35,8 +36,12 @@ export default {
           title: hit.title || name,
           manufacturer: hit.manufacturer || '',
           year: hit.year || '',
-          image: hit.url_image_flyer || hit.url_image_title || hit.url_image_ingame || ''
-        } : { title: name, manufacturer: '', year: '', image: '' };
+          image: hit.url_image_flyer || hit.url_image_title || hit.url_image_ingame || '',
+          // Name of the BIOS/parent set this game needs (e.g. "neogeo"), if any —
+          // lets the app auto-pick a matching uploaded BIOS file instead of
+          // making the user guess from a list of hundreds.
+          biosOf: hit.romof || hit.bios || hit.cloneof || ''
+        } : { title: name, manufacturer: '', year: '', image: '', biosOf: '' };
       } catch (e) {
         meta = { title: name, manufacturer: '', year: '', image: '' };
       }
