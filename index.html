@@ -62,8 +62,8 @@
       <h1>MAME Drive</h1>
       <select id="biosSelect"><option value="">BIOS: none</option></select>
       <select id="coreSelect">
-        <option value="mame2003_plus">Core: MAME 2003-Plus</option>
         <option value="fbneo">Core: FinalBurn Neo</option>
+        <option value="mame2003_plus">Core: MAME 2003-Plus</option>
       </select>
       <button id="manageBiosBtn">BIOS</button>
       <button id="addBtn" class="primary">+ Add ROM</button>
@@ -215,7 +215,7 @@ async function refreshBiosSelect(){
   biosSelect.value = list.some(b=>b.name===current) ? current : '';
 }
 biosSelect.onchange = () => localStorage.setItem('mp_default_bios', biosSelect.value);
-coreSelect.value = localStorage.getItem('mp_core') || 'mame2003_plus';
+coreSelect.value = localStorage.getItem('mp_core') || 'fbneo';
 coreSelect.onchange = () => localStorage.setItem('mp_core', coreSelect.value);
 
 function openBiosModal(){
