@@ -19,10 +19,13 @@ self.addEventListener('fetch', e => {
   // CDN, the metadata API, etc.) are left alone so a failure there can never
   // break or crash this service worker.
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  // Network-first: always try to get the latest deployed version. Only fall
+  // back to the cached copy when offline, so updates show up on the very
+  // next load instead of requiring a manual cache clear.
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
+    fetch(e.request).then(res => {
       if (res.ok) caches.open(CACHE).then(c => c.put(e.request, res.clone()));
       return res;
-    }).catch(() => cached || Response.error()))
+    }).catch(() => caches.match(e.request).then(cached => cached || Response.error()))
   );
 });
