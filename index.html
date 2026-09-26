@@ -21,10 +21,11 @@
   #toolbar button{background:#1c1f26;color:#eee;border:1px solid #2a2d35;border-radius:8px;padding:9px 14px;font-size:.85rem;}
   #toolbar button.primary{background:#4da3ff;color:#04121f;border:none;font-weight:600;}
   #biosSelect{background:#181a20;color:#eee;border:1px solid #2a2d35;padding:9px 10px;border-radius:8px;font-size:.8rem;max-width:150px;}
-  #grid{flex:1;overflow-y:auto;padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:14px;}
+  #grid{flex:1;overflow-y:auto;padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));grid-auto-rows:min-content;align-content:start;gap:14px;}
   .empty{grid-column:1/-1;text-align:center;color:#777;padding:60px 20px;font-size:.9rem;}
   .card{background:#15171d;border-radius:10px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
-  .card .art{aspect-ratio:3/4;background:#1c1f26 center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:#444;font-size:.7rem;text-align:center;padding:6px;}
+  .card .art{aspect-ratio:3/4;background:#1c1f26;display:flex;align-items:center;justify-content:center;color:#444;font-size:.7rem;text-align:center;padding:6px;overflow:hidden;}
+  .card .art img{width:100%;height:100%;object-fit:cover;display:block;}
   .card .info{padding:8px;}
   .card .name{font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .card .sub{font-size:.7rem;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -41,8 +42,9 @@
 
   #topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#111318;gap:8px;}
   #topbar button{background:#1c1f26;color:#eee;border:1px solid #2a2d35;border-radius:8px;padding:8px 12px;font-size:.85rem;}
-  #game-wrap{flex:1;position:relative;background:#000;display:none;}
+  #game-wrap{flex:1;position:relative;background:#000;display:none;overflow:hidden;}
   #game{width:100%;height:100%;}
+  #game canvas{width:100% !important;height:100% !important;display:block;}
 
   #loading-overlay{position:fixed;inset:0;background:#0b0c10;display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:100;}
   #loading-overlay.show{display:flex;}
@@ -59,6 +61,10 @@
     <div id="toolbar">
       <h1>MAME Drive</h1>
       <select id="biosSelect"><option value="">BIOS: none</option></select>
+      <select id="coreSelect">
+        <option value="mame2003_plus">Core: MAME 2003-Plus</option>
+        <option value="fbneo">Core: FinalBurn Neo</option>
+      </select>
       <button id="manageBiosBtn">BIOS</button>
       <button id="addBtn" class="primary">+ Add ROM</button>
     </div>
@@ -76,6 +82,7 @@
 
   <input type="file" id="romInput" accept=".zip" multiple>
   <input type="file" id="biosInput" accept=".zip">
+  <input type="file" id="biosBundleInput" accept=".zip">
 </div>
 
 <div id="loading-overlay">
@@ -102,6 +109,7 @@ function openDB(){
   });
 }
 async function idbPut(store, val){ const db = await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readwrite'); tx.objectStore(store).put(val); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
+async function idbPutAll(store, vals){ const db = await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readwrite'); const os=tx.objectStore(store); vals.forEach(v=>os.put(v)); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
 async function idbAll(store){ const db = await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readonly'); const req=tx.objectStore(store).getAll(); req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
 async function idbDel(store, key){ const db = await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readwrite'); tx.objectStore(store).delete(key); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
 
@@ -110,7 +118,9 @@ const grid = document.getElementById('grid');
 const addBtn = document.getElementById('addBtn');
 const romInput = document.getElementById('romInput');
 const biosInput = document.getElementById('biosInput');
+const biosBundleInput = document.getElementById('biosBundleInput');
 const biosSelect = document.getElementById('biosSelect');
+const coreSelect = document.getElementById('coreSelect');
 const manageBiosBtn = document.getElementById('manageBiosBtn');
 const biosModalHolder = document.getElementById('bios-modal-holder');
 const libraryView = document.getElementById('library-view');
@@ -142,7 +152,7 @@ function buildCard(r){
   card.className = 'card';
   const art = document.createElement('div');
   art.className = 'art';
-  if (r.meta && r.meta.image){ art.style.backgroundImage = `url("${r.meta.image}")`; art.textContent=''; }
+  if (r.meta && r.meta.image){ const img=document.createElement('img'); img.src=r.meta.image; img.loading='lazy'; img.decoding='async'; img.alt=''; art.appendChild(img); }
   else art.textContent = r.meta === null ? 'loading art…' : (r.id);
   const info = document.createElement('div');
   info.className = 'info';
@@ -170,7 +180,10 @@ async function fetchMeta(id){
   try{
     // Same-origin route handled by _worker.js — avoids adb.arcadeitalia.net's
     // missing CORS headers by fetching it server-side instead.
-    const resp = await fetch(`/api/mame-meta?name=${encodeURIComponent(id)}`);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const resp = await fetch(`/api/mame-meta?name=${encodeURIComponent(id)}`, { signal: ctrl.signal });
+    clearTimeout(t);
     const meta = await resp.json();
     const rec = await getRom(id);
     if (rec){ rec.meta = meta; await idbPut('roms', rec); }
@@ -201,6 +214,8 @@ async function refreshBiosSelect(){
   biosSelect.value = list.some(b=>b.name===current) ? current : '';
 }
 biosSelect.onchange = () => localStorage.setItem('mp_default_bios', biosSelect.value);
+coreSelect.value = localStorage.getItem('mp_core') || 'mame2003_plus';
+coreSelect.onchange = () => localStorage.setItem('mp_core', coreSelect.value);
 
 function openBiosModal(){
   idbAll('bios').then(list => {
@@ -210,11 +225,14 @@ function openBiosModal(){
           <h2>BIOS files</h2>
           <p style="font-size:.75rem;color:#888;margin:0 0 8px;">Some systems (e.g. Neo Geo) need their BIOS zip alongside the game. Upload once, then pick it from the BIOS dropdown before playing.</p>
           <div id="biosList">${list.length ? list.map(b=>`<div class="bios-row"><span>${escapeHtml(b.name)}</span><button data-del="${escapeHtml(b.name)}">Remove</button></div>`).join('') : '<div style="font-size:.8rem;color:#666;">No BIOS files uploaded.</div>'}</div>
-          <button id="addBiosBtn">+ Upload BIOS .zip</button>
+          <button id="addBiosBtn">+ Upload single BIOS .zip</button>
+          <button id="addBiosBundleBtn">+ Upload BIOS/device bundle (.zip of many)</button>
+          <div id="biosBundleProgress" style="font-size:.75rem;color:#888;margin-top:6px;"></div>
           <button class="close" id="closeBiosModal">Close</button>
         </div>
       </div>`;
     document.getElementById('addBiosBtn').onclick = () => biosInput.click();
+    document.getElementById('addBiosBundleBtn').onclick = () => biosBundleInput.click();
     document.getElementById('closeBiosModal').onclick = () => biosModalHolder.innerHTML = '';
     document.getElementById('biosModalBg').addEventListener('click', e => { if (e.target.id==='biosModalBg') biosModalHolder.innerHTML=''; });
     document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await idbDel('bios', btn.dataset.del); await refreshBiosSelect(); openBiosModal(); });
@@ -225,6 +243,41 @@ biosInput.addEventListener('change', async e => {
   const f = e.target.files[0];
   if (f){ await idbPut('bios', { name: f.name, blob: f }); await refreshBiosSelect(); if (biosModalHolder.innerHTML) openBiosModal(); }
   biosInput.value = '';
+});
+
+let fflateLoad = null;
+function loadFflate(){
+  if (window.fflate) return Promise.resolve();
+  if (fflateLoad) return fflateLoad;
+  fflateLoad = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js';
+    s.onload = res; s.onerror = rej;
+    document.body.appendChild(s);
+  });
+  return fflateLoad;
+}
+
+biosBundleInput.addEventListener('change', async e => {
+  const f = e.target.files[0];
+  biosBundleInput.value = '';
+  if (!f) return;
+  const progress = document.getElementById('biosBundleProgress');
+  if (progress) progress.textContent = 'Reading bundle…';
+  try{
+    await loadFflate();
+    const buf = new Uint8Array(await f.arrayBuffer());
+    const entries = window.fflate.unzipSync(buf);
+    const names = Object.keys(entries).filter(n => n.toLowerCase().endsWith('.zip'));
+    if (progress) progress.textContent = `Extracted ${names.length} BIOS/device files, saving…`;
+    const records = names.map(name => ({ name: name.split('/').pop(), blob: new Blob([entries[name]]) }));
+    await idbPutAll('bios', records);
+    if (progress) progress.textContent = `Done — added ${records.length} BIOS/device files.`;
+    await refreshBiosSelect();
+    openBiosModal();
+  }catch(err){
+    if (progress) progress.textContent = 'Could not read that bundle — is it a .zip of .zip files?';
+  }
 });
 
 /* ---------- launching a game ---------- */
@@ -241,7 +294,7 @@ async function launch(rom){
   const gameUrl = trackUrl(URL.createObjectURL(rom.blob));
   window.EJS_player = '#game';
   window.EJS_gameUrl = gameUrl;
-  window.EJS_core = 'mame2003_plus';
+  window.EJS_core = coreSelect.value;
   window.EJS_gameName = rom.id;
   window.EJS_pathtodata = 'https://cdn.emulatorjs.org/stable/data/';
   window.EJS_startOnLoaded = true;
@@ -257,7 +310,12 @@ async function launch(rom){
     if (biosRec) window.EJS_biosUrl = trackUrl(URL.createObjectURL(biosRec.blob));
   }
 
-  const hideOverlay = () => { overlay.classList.remove('show'); clearTimeout(watchdog); canvasWatcher.disconnect(); };
+  const hideOverlay = () => {
+    overlay.classList.remove('show'); clearTimeout(watchdog); canvasWatcher.disconnect();
+    // Some cores size their canvas to the container only on a resize event —
+    // nudge it once so the game isn't stuck at zero size until fullscreen is toggled.
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+  };
   window.EJS_onGameStart = hideOverlay;
 
   // Belt-and-braces: some cores don't reliably fire EJS_onGameStart, so also

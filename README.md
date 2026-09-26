@@ -6,7 +6,8 @@ A browser-based MAME arcade player. Drop in any MAME romset `.zip`, and it plays
 
 - **Library** — ROMs you add are stored locally (IndexedDB) so you don't re-upload them each session. Browse a cover-art grid, tap to play.
 - **Cover art & game info** — title, manufacturer, and year are pulled automatically from the [Arcade Database](https://adb.arcadeitalia.net) using the ROM's filename as the MAME short name. Falls back gracefully to the filename if a match isn't found.
-- **BIOS support** — upload shared BIOS files once (e.g. `neogeo.zip`), then pick one from the toolbar dropdown before launching a game that needs it.
+- **BIOS support** — upload a single BIOS zip, or a whole bundle (a `.zip` full of many individual bios/device `.zip` files, like MAME's own `bios-devices` reference sets) which gets split into individually-selectable entries automatically. Pick one from the toolbar dropdown before launching a game that needs it.
+- **Core switcher** — toggle between `mame2003_plus` and FinalBurn Neo (`fbneo`) per launch. See the compatibility note below — this matters more than it sounds.
 - **Loading screen** — a spinner and status text cover the gap between picking a game and the core actually starting.
 - **Cross-device** — built on [EmulatorJS](https://emulatorjs.org), so touch controls, gamepad support, save states, and fullscreen all work out of the box on any device.
 - **Installable PWA** — add to home screen for offline play; service worker caches the app shell.
@@ -33,7 +34,7 @@ Push all five files to a repo and connect it to Cloudflare Pages or Netlify — 
 2. If the game needs a BIOS (e.g. Neo Geo), tap **BIOS**, upload the BIOS zip once, then select it from the dropdown before playing.
 3. Tap a library card to play. Fullscreen and save states are available from the in-game top bar / EmulatorJS menu.
 
-**Core compatibility note:** arcade ROMs are tied to the specific MAME version they were built for. MAME Drive runs the `mame2003_plus` core — romsets built for very different MAME versions may not boot, regardless of frontend.
+**Core compatibility note:** arcade ROMs are tied to the specific MAME version they were built for — `mame2003_plus` only accepts **MAME 0.78**-era romsets. If a ROM (or BIOS/device file) is packaged for a much newer MAME version — e.g. a "MAME 0.185" set — it will not run under `mame2003_plus`, and instead of an error you'll often see the core drop into its own internal RetroArch-style menu, since it couldn't validate the content. FinalBurn Neo (`fbneo`) tolerates a noticeably newer/broader range of sets and is worth trying first for anything downloaded recently, but it isn't a match for current MAME either. If neither core accepts a ROM, the only real fix is sourcing (or rebuilding, via a tool like ClrMamePro) a romset built for one of these two specific core versions.
 
 ## Credits
 
