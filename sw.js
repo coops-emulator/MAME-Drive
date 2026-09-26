@@ -1,4 +1,4 @@
-const CACHE = 'mame-drive-v1';
+const CACHE = 'mame-drive-v2';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
@@ -14,8 +14,15 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
+  const url = new URL(e.request.url);
+  // Only ever manage same-origin GETs. Cross-origin requests (the emulator
+  // CDN, the metadata API, etc.) are left alone so a failure there can never
+  // break or crash this service worker.
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).catch(() => cached))
+    caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
+      if (res.ok) caches.open(CACHE).then(c => c.put(e.request, res.clone()));
+      return res;
+    }).catch(() => cached || Response.error()))
   );
 });

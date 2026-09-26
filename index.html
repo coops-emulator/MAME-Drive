@@ -168,16 +168,10 @@ async function fetchMeta(id){
   const marking = await getRom(id);
   if (marking){ marking.meta = null; await idbPut('roms', marking); }
   try{
-    const url = `https://adb.arcadeitalia.net/service_scraper.php?ajax=query_mame&lang=en&game_name=${encodeURIComponent(id)}`;
-    const resp = await fetch(url);
-    const json = await resp.json();
-    const hit = json && json.result && json.result[0];
-    const meta = hit ? {
-      title: hit.title || id,
-      manufacturer: hit.manufacturer || '',
-      year: hit.year || '',
-      image: hit.url_image_flyer || hit.url_image_title || hit.url_image_ingame || ''
-    } : { title: id, manufacturer: '', year: '', image: '' };
+    // Same-origin route handled by _worker.js — avoids adb.arcadeitalia.net's
+    // missing CORS headers by fetching it server-side instead.
+    const resp = await fetch(`/api/mame-meta?name=${encodeURIComponent(id)}`);
+    const meta = await resp.json();
     const rec = await getRom(id);
     if (rec){ rec.meta = meta; await idbPut('roms', rec); }
   }catch(e){
@@ -252,7 +246,8 @@ async function launch(rom){
   window.EJS_pathtodata = 'https://cdn.emulatorjs.org/stable/data/';
   window.EJS_startOnLoaded = true;
   window.EJS_backgroundColor = '#000';
-  window.EJS_VirtualGamepadSettings = {};
+  window.EJS_language = 'en-US';
+  window.EJS_disableAutoLang = true;
   window.EJS_Buttons = { fullscreen:false, saveState:true, loadState:true, screenRecord:false, quickSave:true, quickLoad:true };
 
   const biosName = biosSelect.value;
@@ -262,7 +257,17 @@ async function launch(rom){
     if (biosRec) window.EJS_biosUrl = trackUrl(URL.createObjectURL(biosRec.blob));
   }
 
-  window.EJS_onGameStart = () => { overlay.classList.remove('show'); clearTimeout(watchdog); };
+  const hideOverlay = () => { overlay.classList.remove('show'); clearTimeout(watchdog); canvasWatcher.disconnect(); };
+  window.EJS_onGameStart = hideOverlay;
+
+  // Belt-and-braces: some cores don't reliably fire EJS_onGameStart, so also
+  // hide the overlay as soon as the emulator's own <canvas> shows up.
+  const gameEl = document.getElementById('game');
+  const canvasWatcher = new MutationObserver(() => {
+    const canvas = gameEl.querySelector('canvas');
+    if (canvas && canvas.width > 0) hideOverlay();
+  });
+  canvasWatcher.observe(gameEl, { childList: true, subtree: true, attributes: true });
 
   const old = document.getElementById('ejs-loader');
   if (old) old.remove();
