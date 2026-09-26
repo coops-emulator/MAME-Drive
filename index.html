@@ -306,7 +306,12 @@ async function launch(rom){
   window.EJS_backgroundColor = '#000';
   window.EJS_language = 'en-US';
   window.EJS_disableAutoLang = true;
-  window.EJS_Buttons = { fullscreen:false, saveState:true, loadState:true, screenRecord:false, quickSave:true, quickLoad:true };
+  // Not overriding EJS_Buttons: selectively hiding some of EmulatorJS's own
+  // buttons (e.g. fullscreen:false) crashes this build's internal click
+  // wiring with "Cannot read properties of null (reading 'classList')",
+  // because it still expects the (now-missing) button element to exist.
+  // Leaving its defaults alone avoids the crash; our own topbar already has
+  // Fullscreen/Library buttons, so the duplication is cosmetic, not harmful.
 
   // Prefer whatever BIOS the user picked manually. If they haven't picked one,
   // auto-match against the BIOS/parent set name the Arcade Database reports

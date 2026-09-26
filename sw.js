@@ -1,4 +1,4 @@
-const CACHE = 'mame-drive-v5';
+const CACHE = 'mame-drive-v6';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
