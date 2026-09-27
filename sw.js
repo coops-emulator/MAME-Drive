@@ -1,4 +1,4 @@
-const CACHE = 'mame-drive-v6';
+const CACHE = 'mame-drive-v7';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
@@ -24,7 +24,13 @@ self.addEventListener('fetch', e => {
   // next load instead of requiring a manual cache clear.
   e.respondWith(
     fetch(e.request).then(res => {
-      if (res.ok) caches.open(CACHE).then(c => c.put(e.request, res.clone()));
+      // Clone synchronously, right here, before the body is touched — cloning
+      // later inside the caches.open().then() callback is too late, since by
+      // then the browser may have already started consuming the original.
+      if (res.ok){
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
+      }
       return res;
     }).catch(() => caches.match(e.request).then(cached => cached || Response.error()))
   );
