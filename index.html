@@ -96,19 +96,44 @@
 
 <script>
 /* ---------- tiny IndexedDB helper ---------- */
-const DB_NAME = 'mame-player', DB_VER = 1;
+const DB_NAME = 'mame-player', DB_VER = 2;
+// v2 splits blobs out of the metadata stores. Listing the library/BIOS used to
+// pull every ROM and all ~97MB of BIOS files into memory at once, which is what
+// kills iOS Safari. Now 'roms'/'bios' hold tiny records and 'romdata'/'biosdata'
+// hold the blobs, read one at a time by key.
+let dbPromise = null;
 function openDB(){
-  return new Promise((res, rej) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((res, rej) => {
     const r = indexedDB.open(DB_NAME, DB_VER);
-    r.onupgradeneeded = () => {
-      const db = r.result;
+    r.onupgradeneeded = e => {
+      const db = r.result, tx = r.transaction;
       if (!db.objectStoreNames.contains('roms')) db.createObjectStore('roms', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('bios')) db.createObjectStore('bios', { keyPath: 'name' });
+      if (!db.objectStoreNames.contains('romdata')) db.createObjectStore('romdata', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('biosdata')) db.createObjectStore('biosdata', { keyPath: 'name' });
+      if (e.oldVersion > 0 && e.oldVersion < 2){
+        const move = (meta, data, key) => {
+          const c = tx.objectStore(meta).openCursor();
+          c.onsuccess = () => {
+            const cur = c.result; if (!cur) return;
+            const v = cur.value;
+            if (v.blob){
+              tx.objectStore(data).put({ [key]: v[key], blob: v.blob });
+              const rest = Object.assign({}, v); delete rest.blob; cur.update(rest);
+            }
+            cur.continue();
+          };
+        };
+        move('roms','romdata','id'); move('bios','biosdata','name');
+      }
     };
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+    r.onsuccess = () => { r.result.onversionchange = () => { r.result.close(); dbPromise = null; }; res(r.result); };
+    r.onerror = () => { dbPromise = null; rej(r.error); };
   });
+  return dbPromise;
 }
+async function idbGet(store, key){ const db = await openDB(); return new Promise((res,rej)=>{ const req=db.transaction(store,'readonly').objectStore(store).get(key); req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
 async function idbPut(store, val){ const db = await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readwrite'); tx.objectStore(store).put(val); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
 async function idbPutAll(store, vals){ const db = await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readwrite'); const os=tx.objectStore(store); vals.forEach(v=>os.put(v)); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
 async function idbAll(store){ const db = await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readonly'); const req=tx.objectStore(store).getAll(); req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
@@ -153,7 +178,7 @@ function buildCard(r){
   card.className = 'card';
   const art = document.createElement('div');
   art.className = 'art';
-  if (r.meta && r.meta.image){ const img=document.createElement('img'); img.src=r.meta.image; img.loading='lazy'; img.decoding='async'; img.alt=''; art.appendChild(img); }
+  if (r.meta && r.meta.image){ const img=document.createElement('img'); img.src='/api/mame-art?name='+encodeURIComponent(r.id); img.onerror=()=>{ img.remove(); art.textContent=r.id; }; img.loading='lazy'; img.decoding='async'; img.alt=''; art.appendChild(img); }
   else art.textContent = r.meta === null ? 'loading art…' : (r.id);
   const info = document.createElement('div');
   info.className = 'info';
@@ -166,42 +191,44 @@ function buildCard(r){
   const del = document.createElement('button');
   del.className = 'del';
   del.textContent = '×';
-  del.onclick = async (e) => { e.stopPropagation(); await idbDel('roms', r.id); renderLibrary(); };
+  del.onclick = async (e) => { e.stopPropagation(); await idbDel('roms', r.id); await idbDel('romdata', r.id); renderLibrary(); };
   card.append(art, info, play, del);
 
-  if (r.meta === undefined) fetchMeta(r.id);
+  if (r.meta === undefined || (r.meta && r.meta.failed && navigator.onLine && !metaTried.has(r.id))) fetchMeta(r.id);
   return card;
 }
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+const metaTried = new Set();
 async function fetchMeta(id){
+  metaTried.add(id);
   const marking = await getRom(id);
-  if (marking){ marking.meta = null; await idbPut('roms', marking); }
+  if (marking && marking.meta === undefined){ marking.meta = null; await idbPut('roms', marking); }
+  let meta;
   try{
-    // Same-origin route handled by _worker.js — avoids adb.arcadeitalia.net's
-    // missing CORS headers by fetching it server-side instead.
+    // Same-origin route handled by _worker.js (avoids the source's missing CORS headers).
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 6000);
     const resp = await fetch(`/api/mame-meta?name=${encodeURIComponent(id)}`, { signal: ctrl.signal });
     clearTimeout(t);
-    const meta = await resp.json();
-    const rec = await getRom(id);
-    if (rec){ rec.meta = meta; await idbPut('roms', rec); }
+    meta = await resp.json();
   }catch(e){
-    const rec = await getRom(id);
-    if (rec){ rec.meta = { title:id, manufacturer:'', year:'', image:'' }; await idbPut('roms', rec); }
+    meta = { title:id, manufacturer:'', year:'', image:'', failed:true }; // retried next time we're online
   }
+  const rec = await getRom(id);
+  if (rec){ rec.meta = meta; await idbPut('roms', rec); }
   renderLibrary();
 }
-async function getRom(id){ return (await idbAll('roms')).find(r => r.id === id); }
+async function getRom(id){ return idbGet('roms', id); }
 
 /* ---------- adding ROMs ---------- */
 addBtn.onclick = () => romInput.click();
 romInput.addEventListener('change', async e => {
   for (const file of e.target.files){
     const id = file.name.replace(/\.zip$/i,'').toLowerCase();
-    await idbPut('roms', { id, blob: file, addedAt: Date.now(), meta: undefined });
+    await idbPut('romdata', { id, blob: file });
+    await idbPut('roms', { id, addedAt: Date.now(), size: file.size, meta: undefined });
   }
   romInput.value = '';
   renderLibrary();
@@ -236,13 +263,13 @@ function openBiosModal(){
     document.getElementById('addBiosBundleBtn').onclick = () => biosBundleInput.click();
     document.getElementById('closeBiosModal').onclick = () => biosModalHolder.innerHTML = '';
     document.getElementById('biosModalBg').addEventListener('click', e => { if (e.target.id==='biosModalBg') biosModalHolder.innerHTML=''; });
-    document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await idbDel('bios', btn.dataset.del); await refreshBiosSelect(); openBiosModal(); });
+    document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await idbDel('bios', btn.dataset.del); await idbDel('biosdata', btn.dataset.del); await refreshBiosSelect(); openBiosModal(); });
   });
 }
 manageBiosBtn.onclick = openBiosModal;
 biosInput.addEventListener('change', async e => {
   const f = e.target.files[0];
-  if (f){ await idbPut('bios', { name: f.name, blob: f }); await refreshBiosSelect(); if (biosModalHolder.innerHTML) openBiosModal(); }
+  if (f){ await idbPut('biosdata', { name: f.name, blob: f }); await idbPut('bios', { name: f.name }); await refreshBiosSelect(); if (biosModalHolder.innerHTML) openBiosModal(); }
   biosInput.value = '';
 });
 
@@ -271,7 +298,9 @@ biosBundleInput.addEventListener('change', async e => {
     const entries = window.fflate.unzipSync(buf);
     const names = Object.keys(entries).filter(n => n.toLowerCase().endsWith('.zip'));
     if (progress) progress.textContent = `Extracted ${names.length} BIOS/device files, saving…`;
-    const records = names.map(name => ({ name: name.split('/').pop(), blob: new Blob([entries[name]]) }));
+    const dataRecs = names.map(name => ({ name: name.split('/').pop(), blob: new Blob([entries[name]]) }));
+    const records = dataRecs.map(d => ({ name: d.name }));
+    await idbPutAll('biosdata', dataRecs);
     await idbPutAll('bios', records);
     if (progress) progress.textContent = `Done — added ${records.length} BIOS/device files.`;
     await refreshBiosSelect();
@@ -300,7 +329,9 @@ async function launch(rom){
   // Pass a real File (not a blob: URL). EmulatorJS names the file it gives the
   // core after the URL's last segment, so a blob URL becomes a random UUID and
   // the arcade core can't find "chasehq.zip". A File keeps its proper name.
-  const gameFile = new File([rom.blob], rom.id + '.zip', { type: 'application/zip' });
+  const romRec = await idbGet('romdata', rom.id);
+  if (!romRec){ loadingText.textContent = 'ROM data missing — remove and re-add this game.'; return; }
+  const gameFile = new File([romRec.blob], rom.id + '.zip', { type: 'application/zip' });
   window.EJS_player = '#game';
   window.EJS_gameUrl = gameFile;
   window.EJS_core = coreSelect.value;
@@ -310,6 +341,8 @@ async function launch(rom){
   window.EJS_backgroundColor = '#000';
   window.EJS_language = 'en-US';
   window.EJS_disableAutoLang = true;
+  // Keep downloaded cores for a year instead of the default few days, so they stay available offline.
+  window.EJS_cacheConfig = { enabled: true, cacheMaxSizeMB: 2048, cacheMaxAgeMins: 525600 };
   // Not overriding EJS_Buttons: selectively hiding some of EmulatorJS's own
   // buttons (e.g. fullscreen:false) crashes this build's internal click
   // wiring with "Cannot read properties of null (reading 'classList')",
@@ -322,11 +355,13 @@ async function launch(rom){
   // for this game (rom.meta.biosOf), so you don't have to guess from a list
   // of hundreds of uploaded BIOS/device files.
   window.EJS_biosUrl = '';
-  const allBios = await idbAll('bios');
-  let chosenBios = biosSelect.value ? allBios.find(b => b.name === biosSelect.value) : null;
-  if (!chosenBios && rom.meta && rom.meta.biosOf){
-    chosenBios = allBios.find(b => b.name.replace(/\.zip$/i,'').toLowerCase() === rom.meta.biosOf.toLowerCase());
+  const allBios = await idbAll('bios'); // names only now — cheap
+  let chosenName = biosSelect.value || '';
+  if (!chosenName && rom.meta && rom.meta.biosOf){
+    const hit = allBios.find(b => b.name.replace(/\.zip$/i,'').toLowerCase() === rom.meta.biosOf.toLowerCase());
+    if (hit) chosenName = hit.name;
   }
+  const chosenBios = chosenName ? await idbGet('biosdata', chosenName) : null;
   if (chosenBios){
     window.EJS_biosUrl = new File([chosenBios.blob], chosenBios.name, { type: 'application/zip' });
     loadingText.textContent = `Loading ${(rom.meta && rom.meta.title) || rom.id}… (BIOS: ${chosenBios.name})`;
@@ -387,6 +422,7 @@ function stopEmulator(){
   const old = document.getElementById('ejs-loader');
   if (old) old.remove();
   delete window.EJS_emulator;
+  delete window.EJS_gameUrl; delete window.EJS_biosUrl; // let the ROM/BIOS buffers be freed
   revokeUrls();
 }
 
@@ -410,6 +446,7 @@ document.getElementById('fsBtn').onclick = () => {
 };
 
 /* ---------- init ---------- */
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
 refreshBiosSelect();
 renderLibrary();
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));

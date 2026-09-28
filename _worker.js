@@ -56,6 +56,35 @@ export default {
       return response;
     }
 
+    // Cover art, served from our own origin so the service worker can cache it
+    // for offline use (the source site sends no CORS headers, so the browser
+    // can't fetch/cache it directly).
+    if (url.pathname === '/api/mame-art') {
+      const name = url.searchParams.get('name');
+      if (!name) return new Response('Missing "name" parameter', { status: 400 });
+      const cache = caches.default;
+      const cacheKey = new Request(url.toString(), request);
+      const hit = await cache.match(cacheKey);
+      if (hit) return hit;
+      try {
+        const metaRes = await fetch(`https://adb.arcadeitalia.net/service_scraper.php?ajax=query_mame&lang=en&game_name=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(6000) });
+        const json = await metaRes.json();
+        const g = json && json.result && json.result[0];
+        const imgUrl = g && (g.url_image_flyer || g.url_image_title || g.url_image_ingame);
+        if (!imgUrl) return new Response('No art', { status: 404 });
+        const img = await fetch(imgUrl, { signal: AbortSignal.timeout(10000) });
+        if (!img.ok) return new Response('No art', { status: 404 });
+        const out = new Response(img.body, { headers: {
+          'Content-Type': img.headers.get('Content-Type') || 'image/png',
+          'Cache-Control': 'public, max-age=2592000'
+        }});
+        ctx.waitUntil(cache.put(cacheKey, out.clone()));
+        return out;
+      } catch (e) {
+        return new Response('Art unavailable', { status: 502 });
+      }
+    }
+
     return env.ASSETS.fetch(request);
   }
 };
