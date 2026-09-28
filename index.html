@@ -285,6 +285,7 @@ biosBundleInput.addEventListener('change', async e => {
 let watchdog = null;
 let currentRom = null;
 async function launch(rom){
+  stopEmulator(); // never leave a previous game running underneath
   currentRom = rom;
   overlay.classList.add('show');
   loadingText.textContent = `Loading ${(rom.meta && rom.meta.title) || rom.id}…`;
@@ -362,10 +363,35 @@ async function launch(rom){
 
 cancelLoad.onclick = () => { overlay.classList.remove('show'); teardownGame(); };
 
-function teardownGame(){
+// Fully stop the running emulator. Just emptying the container leaves the core's
+// main loop, audio and input handlers alive in the background, so shut it down
+// properly: pause the loop, fire EmulatorJS's own "exit" event (saves, unmounts,
+// aborts the wasm module), stop audio, then remove the DOM.
+function stopEmulator(){
+  const emu = window.EJS_emulator;
+  if (emu){
+    try{ emu.gameManager && emu.gameManager.toggleMainLoop(0); }catch(e){}
+    try{ clearInterval(emu.saveSaveInterval); }catch(e){}
+    try{
+      const al = emu.Module && emu.Module.AL;
+      if (al){
+        Object.values(al.contexts || {}).forEach(c => { try{ c.audioCtx && c.audioCtx.close(); }catch(e){} });
+        if (al.currentCtx && al.currentCtx.audioCtx){ try{ al.currentCtx.audioCtx.close(); }catch(e){} }
+      }
+    }catch(e){}
+    try{ emu.gamepad && emu.gamepad.timeout && clearTimeout(emu.gamepad.timeout); }catch(e){}
+    try{ emu.callEvent('exit'); }catch(e){}
+  }
+  clearTimeout(watchdog);
   document.getElementById('game').innerHTML = '';
-  revokeUrls();
+  const old = document.getElementById('ejs-loader');
+  if (old) old.remove();
   delete window.EJS_emulator;
+  revokeUrls();
+}
+
+function teardownGame(){
+  stopEmulator();
   gameWrap.classList.remove('show');
   topbar.classList.add('hidden');
   libraryView.classList.remove('hidden');
@@ -375,7 +401,7 @@ document.getElementById('backBtn').onclick = teardownGame;
 document.getElementById('switchCoreBtn').onclick = () => {
   coreSelect.value = coreSelect.value === 'mame2003_plus' ? 'fbneo' : 'mame2003_plus';
   localStorage.setItem('mp_core', coreSelect.value);
-  if (currentRom) launch(currentRom);
+  if (currentRom){ stopEmulator(); launch(currentRom); }
 };
 
 document.getElementById('fsBtn').onclick = () => {
