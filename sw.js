@@ -1,7 +1,6 @@
-// App shell cache is versioned; the CDN cache (emulator + cores) is NOT, so a
-// new app deploy never forces people to re-download several MB of emulator.
-const CACHE = 'mame-drive-v10';
-const CDN_CACHE = 'mame-drive-emulator';
+// App shell cache. Cross-origin CDN/core files are intentionally left alone —
+// see the note in the fetch handler below.
+const CACHE = 'mame-drive-v11';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
@@ -11,7 +10,9 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== CDN_CACHE).map(k => caches.delete(k))))
+    // Also clears out 'mame-drive-emulator', a cache an earlier version created for
+    // CDN/core files; that approach broke WASM streaming compile and was removed.
+    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
   );
   self.clients.claim();
 });
@@ -37,21 +38,6 @@ async function networkFirst(req, cacheName, ms, matchOpts){
   }
 }
 
-// Emulator files never change for a given URL, so serve from cache first.
-async function cacheFirstCdn(req){
-  const cache = await caches.open(CDN_CACHE);
-  const cached = await cache.match(req.url);
-  if (cached) return cached;
-  try{
-    // Re-request in CORS mode so we store a real (non-opaque) response.
-    const res = await fetch(req.url, { mode: 'cors' });
-    if (res.ok) cache.put(req.url, res.clone());
-    return res;
-  }catch(err){
-    return Response.error();
-  }
-}
-
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -60,15 +46,11 @@ self.addEventListener('fetch', e => {
   if (url.origin === self.location.origin){
     // 4s cap so a bad mobile connection falls back to the cached copy instead of hanging.
     e.respondWith(networkFirst(req, CACHE, 4000));
-    return;
   }
-  if (url.hostname === 'cdn.emulatorjs.org'){
-    // Core "report" files are re-fetched with a changing ?v= — prefer fresh, match cache ignoring the query.
-    if (url.pathname.includes('/cores/reports/')){
-      e.respondWith(networkFirst(req, CDN_CACHE, 3000, { ignoreSearch: true }));
-    } else {
-      e.respondWith(cacheFirstCdn(req));
-    }
-  }
-  // everything else (metadata CDN, fflate, etc.) passes straight through
+  // Cross-origin requests (emulator CDN cores/wasm, metadata, fflate, etc.) are
+  // left completely alone. A previous version tried to cache these ourselves,
+  // but re-wrapping a WASM core's response broke WebAssembly's fast streaming
+  // compile on the first load and forced a retry. EmulatorJS already caches
+  // its own core files (EJS_cacheConfig, set in index.html); this service
+  // worker only needs to own the app shell.
 });

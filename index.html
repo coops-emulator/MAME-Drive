@@ -446,6 +446,29 @@ document.getElementById('fsBtn').onclick = () => {
 };
 
 /* ---------- init ---------- */
+// Audio unlock: Safari/Chrome require sound to start within a very recent tap.
+// Loading a big emulator core can take a while, so by the time it's ready the
+// original "Play" tap is stale and the browser blocks audio until a fresh tap
+// (that's the popup you were seeing). Unlocking on the very first tap anywhere
+// on the page — well before a game is even chosen — avoids that second prompt
+// for most people, since most browsers keep audio unlocked per page after that.
+(function () {
+  function unlock(){
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      const buf = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = buf; src.connect(ctx.destination); src.start(0);
+      if (ctx.resume) ctx.resume();
+    } catch (e) {}
+    document.removeEventListener('pointerdown', unlock);
+    document.removeEventListener('touchend', unlock);
+  }
+  document.addEventListener('pointerdown', unlock, { once: true, passive: true });
+  document.addEventListener('touchend', unlock, { once: true, passive: true });
+})();
+
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
 refreshBiosSelect();
 renderLibrary();
