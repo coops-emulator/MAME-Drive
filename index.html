@@ -296,9 +296,12 @@ async function launch(rom){
   const otherCore = coreSelect.value === 'mame2003_plus' ? 'FinalBurn Neo' : 'MAME 2003-Plus';
   document.getElementById('switchCoreBtn').textContent = `Try ${otherCore}`;
 
-  const gameUrl = trackUrl(URL.createObjectURL(rom.blob));
+  // Pass a real File (not a blob: URL). EmulatorJS names the file it gives the
+  // core after the URL's last segment, so a blob URL becomes a random UUID and
+  // the arcade core can't find "chasehq.zip". A File keeps its proper name.
+  const gameFile = new File([rom.blob], rom.id + '.zip', { type: 'application/zip' });
   window.EJS_player = '#game';
-  window.EJS_gameUrl = gameUrl;
+  window.EJS_gameUrl = gameFile;
   window.EJS_core = coreSelect.value;
   window.EJS_gameName = rom.id;
   window.EJS_pathtodata = 'https://cdn.emulatorjs.org/stable/data/';
@@ -324,7 +327,7 @@ async function launch(rom){
     chosenBios = allBios.find(b => b.name.replace(/\.zip$/i,'').toLowerCase() === rom.meta.biosOf.toLowerCase());
   }
   if (chosenBios){
-    window.EJS_biosUrl = trackUrl(URL.createObjectURL(chosenBios.blob));
+    window.EJS_biosUrl = new File([chosenBios.blob], chosenBios.name, { type: 'application/zip' });
     loadingText.textContent = `Loading ${(rom.meta && rom.meta.title) || rom.id}… (BIOS: ${chosenBios.name})`;
   }
 
